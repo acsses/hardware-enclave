@@ -3,13 +3,8 @@
 
 //! `LinuxTpmEncryptor` -- ECDH P-256 / ECIES encryption backend using Linux TPM 2.0.
 //!
-#![allow(
-    dead_code,
-    unused_imports,
-    unused_qualifications,
-    unreachable_patterns,
-    let_underscore_drop
-)]
+
+#![allow(unused_qualifications, let_underscore_drop)]
 //! ## ECIES Wire Format
 //!
 //! ```text
@@ -31,12 +26,12 @@
 //!    (the private key never leaves the TPM).
 //! 3. Derive the AES key and decrypt.
 
-use super::tpm::{self, TpmConfig};
-use crate::internal::core::metadata::{self, DirLock};
-use crate::internal::core::traits::{EnclaveEncryptor, EnclaveKeyManager};
-use crate::internal::core::types::validate_label;
-use crate::internal::core::{AccessPolicy, Error, KeyType, Result};
+use crate::tpm::{self, TpmConfig};
 use elliptic_curve::sec1::FromEncodedPoint;
+use enclaveapp_core::metadata::{self, DirLock};
+use enclaveapp_core::traits::{EnclaveEncryptor, EnclaveKeyManager};
+use enclaveapp_core::types::validate_label;
+use enclaveapp_core::{AccessPolicy, Error, KeyType, Result};
 use tss_esapi::structures::{EccParameter, EccPoint, Public};
 use tss_esapi::traits::{Marshall, UnMarshall};
 
@@ -86,13 +81,12 @@ impl LinuxTpmEncryptor {
             detail: e.to_string(),
         })?;
 
-        let key_handle  =
-            ctx.execute_with_nullauth_session(|ctx| {
-                ctx.load(primary_handle, private, public)
-            }).map_err(|e| Error::KeyOperation {
+        let key_handle =
+            ctx.load(primary_handle, private, public)
+                .map_err(|e| Error::KeyOperation {
                     operation: "load_key".into(),
                     detail: e.to_string(),
-            })?;
+                })?;
 
         Ok((ctx, key_handle))
     }
@@ -158,11 +152,11 @@ impl EnclaveKeyManager for LinuxTpmEncryptor {
         let primary_handle = tpm::create_primary(&mut ctx)?;
         let template = tpm::encryption_key_template()?;
 
-        let result = ctx.execute_with_nullauth_session(|ctx| {ctx
+        let result = ctx
             .create(primary_handle, template, None, None, None, None)
-        }).map_err(|e| Error::GenerateFailed {
+            .map_err(|e| Error::GenerateFailed {
                 detail: format!("TPM create: {e}"),
-        })?;
+            })?;
 
         // Extract the public key as SEC1 uncompressed point
         let pub_key = tpm::extract_public_key(&result.out_public)?;
@@ -183,9 +177,9 @@ impl EnclaveKeyManager for LinuxTpmEncryptor {
         // Layer the HMAC sidecar on top of the persisted meta.
         // Best-effort; next load's auto-migrate retries on
         // Secret Service unavailability.
-        if let Some(hmac_key) = crate::internal::keyring::meta_hmac_key(&self.config.app_name) {
-            let meta = crate::internal::core::KeyMeta::new(label, key_type, policy);
-            if let Err(e) = crate::internal::core::metadata::save_meta_with_hmac(
+        if let Some(hmac_key) = enclaveapp_keyring::meta_hmac_key(&self.config.app_name) {
+            let meta = enclaveapp_core::KeyMeta::new(label, key_type, policy);
+            if let Err(e) = enclaveapp_core::metadata::save_meta_with_hmac(
                 &dir,
                 label,
                 &meta,
@@ -337,11 +331,11 @@ impl EnclaveEncryptor for LinuxTpmEncryptor {
         let eph_point = sec1_to_ecc_point(eph_pub_bytes)?;
 
         // ECDH via TPM -- the private key never leaves the hardware
-        let shared_point = ctx.execute_with_nullauth_session(|ctx| {
+        let shared_point =
             ctx.ecdh_z_gen(key_handle, eph_point)
-        }).map_err(|e| Error::DecryptFailed {
-            detail: format!("TPM ECDH: {e}"),
-        })?;
+                .map_err(|e| Error::DecryptFailed {
+                    detail: format!("TPM ECDH: {e}"),
+                })?;
 
         // The shared secret is the x-coordinate of the resulting point
         let shared_x = shared_point.x().value();

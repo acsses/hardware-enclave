@@ -2,19 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 //! `LinuxTpmSigner` -- ECDSA P-256 signing backend using Linux TPM 2.0.
-#![allow(
-    dead_code,
-    unused_imports,
-    unused_qualifications,
-    unreachable_patterns,
-    let_underscore_drop
-)]
 
-use super::tpm::{self, TpmConfig};
-use crate::internal::core::metadata::{self, DirLock};
-use crate::internal::core::traits::{EnclaveKeyManager, EnclaveSigner};
-use crate::internal::core::types::validate_label;
-use crate::internal::core::{AccessPolicy, Error, KeyType, Result};
+#![allow(unused_qualifications, let_underscore_drop)]
+
+use crate::tpm::{self, TpmConfig};
+use enclaveapp_core::metadata::{self, DirLock};
+use enclaveapp_core::traits::{EnclaveKeyManager, EnclaveSigner};
+use enclaveapp_core::types::validate_label;
+use enclaveapp_core::{AccessPolicy, Error, KeyType, Result};
 use sha2::{Digest as _, Sha256};
 use tss_esapi::structures::{
     Digest as TpmDigest, Public, Signature as TpmSignature, SignatureScheme,
@@ -61,12 +56,12 @@ impl LinuxTpmSigner {
             detail: e.to_string(),
         })?;
 
-        let key_handle =ctx.execute_with_nullauth_session(|ctx| {
+        let key_handle =
             ctx.load(primary_handle, private, public)
-        }).map_err(|e|Error::KeyOperation{
-            operation: "load_key".into(),
-            detail: e.to_string(),
-        })?;
+                .map_err(|e| Error::KeyOperation {
+                    operation: "load_key".into(),
+                    detail: e.to_string(),
+                })?;
 
         Ok((ctx, key_handle))
     }
@@ -92,11 +87,11 @@ impl EnclaveKeyManager for LinuxTpmSigner {
         let primary_handle = tpm::create_primary(&mut ctx)?;
         let template = tpm::signing_key_template()?;
 
-        let result = ctx.execute_with_nullauth_session(|ctx| {ctx
+        let result = ctx
             .create(primary_handle, template, None, None, None, None)
-        }).map_err(|e| Error::GenerateFailed {
-            detail: format!("TPM create: {e}"),
-         })?;
+            .map_err(|e| Error::GenerateFailed {
+                detail: format!("TPM create: {e}"),
+            })?;
 
         // Extract the public key as SEC1 uncompressed point
         let pub_key = tpm::extract_public_key(&result.out_public)?;
@@ -124,9 +119,9 @@ impl EnclaveKeyManager for LinuxTpmSigner {
         // same Secret Service entry shape the keyring backend uses
         // (`(<app>, __meta_tag_<label>__)`); both Linux backends
         // share the same trust domain.
-        if let Some(hmac_key) = crate::internal::keyring::meta_hmac_key(&self.config.app_name) {
-            let meta = crate::internal::core::KeyMeta::new(label, key_type, policy);
-            if let Err(e) = crate::internal::core::metadata::save_meta_with_hmac(
+        if let Some(hmac_key) = enclaveapp_keyring::meta_hmac_key(&self.config.app_name) {
+            let meta = enclaveapp_core::KeyMeta::new(label, key_type, policy);
+            if let Err(e) = enclaveapp_core::metadata::save_meta_with_hmac(
                 &dir,
                 label,
                 &meta,
@@ -139,7 +134,7 @@ impl EnclaveKeyManager for LinuxTpmSigner {
                      next load's auto-migrate will retry"
                 );
             }
-            if let Err(e) = crate::internal::keyring::meta_tag::stamp_from_disk(
+            if let Err(e) = enclaveapp_keyring::meta_tag::stamp_from_disk(
                 &self.config.app_name,
                 label,
                 &dir,
@@ -246,16 +241,16 @@ fn ensure_meta_integrity(app_name: &str, label: &str, dir: &std::path::Path) -> 
         return Ok(());
     }
 
-    let hmac_key = match crate::internal::keyring::meta_hmac_key_existing(app_name) {
+    let hmac_key = match enclaveapp_keyring::meta_hmac_key_existing(app_name) {
         Ok(Some(k)) => k,
         Ok(None) | Err(_) => return Ok(()),
     };
 
-    match crate::internal::keyring::meta_tag::verify(app_name, label, dir, hmac_key.as_slice())? {
-        crate::internal::keyring::meta_tag::VerifyOutcome::Match
-        | crate::internal::keyring::meta_tag::VerifyOutcome::NoMeta
-        | crate::internal::keyring::meta_tag::VerifyOutcome::KeychainUnavailable => Ok(()),
-        crate::internal::keyring::meta_tag::VerifyOutcome::Tamper => Err(Error::KeyOperation {
+    match enclaveapp_keyring::meta_tag::verify(app_name, label, dir, hmac_key.as_slice())? {
+        enclaveapp_keyring::meta_tag::VerifyOutcome::Match
+        | enclaveapp_keyring::meta_tag::VerifyOutcome::NoMeta
+        | enclaveapp_keyring::meta_tag::VerifyOutcome::KeychainUnavailable => Ok(()),
+        enclaveapp_keyring::meta_tag::VerifyOutcome::Tamper => Err(Error::KeyOperation {
             operation: "meta_tag_verify".into(),
             detail: format!(
                 "key '{label}': metadata integrity check failed. The on-disk meta \
@@ -264,9 +259,9 @@ fn ensure_meta_integrity(app_name: &str, label: &str, dir: &std::path::Path) -> 
                  a known-good state."
             ),
         }),
-        crate::internal::keyring::meta_tag::VerifyOutcome::Legacy => {
+        enclaveapp_keyring::meta_tag::VerifyOutcome::Legacy => {
             let marker_set =
-                crate::internal::keyring::meta_migration_marker::is_set(app_name).unwrap_or(false);
+                enclaveapp_keyring::meta_migration_marker::is_set(app_name).unwrap_or(false);
             if marker_set {
                 Err(Error::KeyOperation {
                     operation: "meta_tag_legacy_post_migration".into(),
@@ -330,9 +325,9 @@ impl EnclaveSigner for LinuxTpmSigner {
         .map_err(|e| Error::SignFailed {
             detail: format!("ticket: {e}"),
         })?;
-        let signature = ctx.execute_with_nullauth_session(|ctx| {ctx
+        let signature = ctx
             .sign(key_handle, digest, SignatureScheme::Null, ticket)
-        }).map_err(|e| Error::SignFailed {
+            .map_err(|e| Error::SignFailed {
                 detail: format!("TPM sign: {e}"),
             })?;
 
@@ -407,7 +402,7 @@ fn encode_der_length(out: &mut Vec<u8>, len: usize) {
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::internal::core::KeyMeta;
+    use enclaveapp_core::KeyMeta;
 
     #[test]
     fn encode_der_integer_no_padding() {

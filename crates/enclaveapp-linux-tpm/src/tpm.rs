@@ -2,11 +2,16 @@
 // SPDX-License-Identifier: MIT
 
 //! Core TPM 2.0 operations shared between signing and encryption backends.
+#![allow(
+    dead_code,
+    unused_imports,
+    unused_qualifications,
+    unreachable_patterns,
+    let_underscore_drop
+)]
 
-#![allow(unused_qualifications, let_underscore_drop)]
-
-use enclaveapp_core::metadata;
-use enclaveapp_core::{AccessPolicy, Error, KeyMeta, KeyType, Result};
+use crate::internal::core::metadata;
+use crate::internal::core::{AccessPolicy, Error, KeyMeta, KeyType, Result};
 use std::path::{Path, PathBuf};
 use tss_esapi::{
     attributes::ObjectAttributesBuilder,
@@ -97,8 +102,9 @@ pub fn primary_key_template() -> Result<Public> {
 /// Create the primary storage key. Returns its handle.
 pub fn create_primary(ctx: &mut Context) -> Result<tss_esapi::handles::KeyHandle> {
     let template = primary_key_template()?;
-    let result = ctx
+    let result = ctx.execute_with_nullauth_session(|ctx| {ctx
         .create_primary(Hierarchy::Owner, template, None, None, None, None)
+    })
         .map_err(|e| Error::KeyOperation {
             operation: "create_primary".into(),
             detail: e.to_string(),
@@ -237,7 +243,7 @@ impl TpmConfig {
 const TPM_BLOB_EXTENSIONS: [&str; 2] = ["tpm_pub", "tpm_priv"];
 
 fn blob_path(dir: &Path, label: &str, extension: &str) -> Result<PathBuf> {
-    enclaveapp_core::types::validate_label(label)?;
+    crate::internal::core::types::validate_label(label)?;
     Ok(dir.join(format!("{label}.{extension}")))
 }
 
